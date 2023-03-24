@@ -55,13 +55,8 @@ data Color = Red | Blue | Green | Yellow
 
 data Number = Zero | One | Two | Three | Four | Five | Six | Seven | Eight | Nine
 
-data Special = Plus2 Color | Plus4 | Reverse Color | PickColor
-
-data CardKind = NormalCard Color Number | SpecialCard Special
+data Special = Plus2 { color: Color } | Plus4 | Reverse { color: Color } | PickColor
 ```
-
-The important type here is `CardKind`, which we will use to specify what kind
-of card exists in the game.
 
 > These data definitions each create a new type. The types are so-called sum
 > types. We have chosen the valid range of values each can take. So for
@@ -71,36 +66,52 @@ of card exists in the game.
 Let's do game startup:
 
 ```cgelang
+data GameZone = DeckZone | DiscardPile | PlayerHand { id: PlayerId }
 
-zoneid data Zone = DeckZone | DiscardPile | PlayerHand PlayerId
+impl Zone for GameZone
 
-func createCard(CardKind kind) -> GameObject do
-    let obj = GameObject()
-    obj.set_value(kind)
+data SimpleCard = SimpleCard { color: Color, number: Number }
 
-    obj
-end
+impl Object for SimpleCard
 
-on GameSetup do
+data Plus2Card = Plus2Card { color: Color }
+
+impl Object for Plus2Card
+
+data ReverseCard = ReverseCard { color: Color }
+
+impl Object for ReverseCard
+
+data Plus4Card = Plus4Card
+
+impl Object for Plus4Card
+
+data PickColorCard = PickColorCard
+
+impl Object for PickColor Card
+
+func setupGame() {
     let cards = []
     for color in [Red, Blue, Green, Yellow] do
         for number in 0..10 do
-            let newCard = NormalCard(color, number);
-            cards.push(createCard(newCard))
+            cards.push(SimpleCard { color, number });
+            cards.push(SimpleCard { color, number });
         end
 
-        cards.push(createCard(SpecialCard(Plus2(color))))
-        cards.push(createCard(SpecialCard(Reverse(color))))
+        cards.push(Plus2Card { color });
+        cards.push(Plus2Card { color });
+        cards.push(ReverseCard { color });
+        cards.push(ReverseCard { color });
     end
 
-    for _ in 0..2 do
-        cards.push(createCard(SpecialCard(Plus4())))
-        cards.push(createCard(SpecialCard(PickColor())))
+    for _ in 0..4 do
+        cards.push(Plus4Card);
+        cards.push(PickColorCard);
     end
-
-    cards.shuffle()
 
     let deck = createZone(DeckZone, cards)
+
+    deck.shuffle()
 
     createZone(DiscardPile, [])
 
@@ -109,71 +120,87 @@ on GameSetup do
 
         createZone(PlayerHand(player), startingHand) 
     end
-end
+}
+
+Game.registerEvent(GameSetup, setupGame)
 ```
 
 A few things happen here:
 
-- `zoneid data` is an _annotated_ type definition. It signals to the CGE that
-  this data type can be used for defining game zones. __There can only be a
-  single `zoneid` type.__ This is to prevent bugs while writing the game.
-- `on ... do` is a _triggered_ game rule. In this case, the trigger is the game
-  being set up.
-- We then create cards in every combination, as well as the special cards.
+- We create cards in every combination, as well as the special cards.
 - Using `func <name>(<args...>) -> <return> do ... end` we create a function
   that we can then use to create the game objects.
-- `GameObject.set_value` sets a value based on the _type_ of the value. This
-  means that for each unique type, a game object can hold that value. Think
-  like a hashmap, except the key _is the type itself_.
 
 
 Now, let's start defining the beginning of the game:
 
 ```cgelang
-on GameStart do
+func startGame {
     let deck = getZone(DeckZone)
     let discardPile = getZone(DiscardPile)
 
     discardPile.push(deck.takeFront(1))
-end
-```
+}
 
-- Once again we see the `on ... do` syntax, here for the `GameStart` event
+Game.registerEvent(StartGame, startGame);
+```
 
 Now, it _could_ be that the first card is a special card. In which case it will
 directly have effect on the current player! Here is how we detect this case:
 
 
 ```cgelang
-on ObjectMoveTo(DiscardPile) do |fromZone, toZone, object|
-    let cardKind: CardKind = object.get_value()
+func onPlayPlus2(fromZone, toZone: DiscardPile, obj: Plus2Card) {
+    let deck = getZone(Deck)
 
-    let deck = getZone(Deck())
+    let hand = getZone(PlayerHand { player: currentPlayer })
 
-    match cardKind do
-        NormalCard color number do
-            // We do nothing
-        end
-        SpecialCard special do
-            let currentPlayer = getCurrentPlayer()
-            let hand = getZone(PlayerHand(currentPlayer))
+    hand.push(deck.takeFront(2))
+}
 
-            match special do
-                Plus2 color do
-                    hand.push(deck.takeFront(2))
-                end
-                Plus4 do
-                    hand.push(deck.takeFront(4))
-                    // TODO: What to do if its first card drawn?
-                end
-                Reverse color do
-                    // TODO: Reverse player order
-                end
-                PickColor do
-                    // TODO: What to do if its the first card?
-                end
-            end
-        end
-    end
-end
+Game.registerEvent(ObjectMoveTo { toZone: DiscardPile, object: Plus2Card, .. }, onPlayPlus2);
 ```
+
+
+Currently players can't really do anything, this is because we have not _allowed_ them to do so!
+An important aspect in CGE is that players can allow do actions you have explicitely allowed.
+
+Here's how we define that players can play a single card from their hand:
+
+
+```cgelang
+data PlayCard = PlayCard { card: Object }
+
+impl Input for PlayCard
+
+data DrawCard = DrawCard
+
+impl Input for DrawCard
+
+data ActivePlayer = ActivePlayer { player: PlayerId }
+
+func startGameWithActivePlayer() {
+    let players = getAllPlayers();
+
+    let startPlayer = players.takeRandom();
+
+    Game.setValue(ActivePlayer { player: startPlayer });
+}
+
+Game.registerEvent(GameStart, startGameWithActivePlayer);
+
+data Phase = PlayCardOrDraw
+
+func allowCurrentPlayerToDrawOrPlayCard() {
+    let activePlayer: ActivePlayer = Game.getValue();
+    Game.allowInputFrom(activePlayer.player, DrawCard);
+    Game.allowInputFrom(activePlayer.player, PlayCard);
+}
+
+Game.registerFact(PlayCardOrDraw, allowCurrentPlayerToDrawOrPlayCard)
+
+```
+
+It is important to note that these inputs are recalculated _everytime_ the engine 'steps forward'
+
+
