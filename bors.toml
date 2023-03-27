@@ -1,0 +1,14 @@
+status = [
+    # Garnix
+    "Evaluate flake.nix",
+    "check cge [x86_64-linux]",
+    "check cge-clippy [x86_64-linux]",
+    "check cge-fmt [x86_64-linux]",
+]
+pr_status = [
+    # Github Actions
+    "dco-check",
+    "license",
+]
+update_base_for_deletes = true
+cut_body_after = "<details>"
