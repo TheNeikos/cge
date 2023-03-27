@@ -1,0 +1,172 @@
+# A simple game of Uno
+
+data Color = Red | Green | Blue | Yellow
+
+data Number = Zero | One | Two | Three | Four | Five | Six | Seven | Eight | Nine
+
+data Card = 
+    | Simple { color: Color, number: Number } 
+    | Plus2 { color: Color } 
+    | Plus4 
+    | Reverse { color: Color } 
+    | PickColor
+
+zone Deck { } unique
+
+zone Discard { color: Red, number: Some Zero } unique
+
+zone Hand { } per player
+
+data ActivePlayer = ActivePlayer { player: Player }
+
+allColors = [Red, Green, Blue, Yellow]
+allNumbers = [Zero, One, Two, Three, Four, Five, Six, Seven, Eight, Nine]
+
+allCards :: [Card]
+allCards = [Simple { color , number } | color <- allColors, number <- allNumbers]
+        ++ [Plus2 { color } | color <- allColors]
+        ++ [Reverse { color } | color <- allColors]
+        ++ [Plus4, Plus4, Plus4, Plus4]
+        ++ [PickColor, PickColor, PickColor, PickColor]
+
+# When the game starts, each player gets 7 cards
+
+startGame = do
+    let deck = game.getZone Deck
+    game.insertObjects deck (shuffle (map (card = game.createObject [ card ]) allCards))
+    for player in game.getPlayers do
+        let hand = player.getZone Hand
+        let cards = takeObjects deck 7
+        game.insertObjects hand cards
+    game.setValue ActivePlayer { player: (takeRandom game.getPlayers) }
+
+on GameStart run startGame
+
+action PlayCard = PlayCard { object: Object }
+action PlayCardWithColor = PlayCardWithColor { object: Object, color: Color }
+action DrawCard = DrawCard
+
+# The active player is always allowed to play cards from their hand
+
+activePlayerCanPlayFromHand = do
+    let ActivePlayer { player } = game.getValue
+    let hand = player.getZone Hand
+    for card in hand.getObjects do
+        match card
+            when Simple { .. } | Reverse { .. } | Plus2 { .. } do
+                player.addAction PlayCard
+            when Plus4 | PickColor do
+                player.addAction PlayCardWithColor
+
+while GameRunning run activePlayerCanPlayFromHand
+
+# Playing a normal card is fine, as long as color and/or numbers match!
+
+playedCard player PlayCard { object } = do
+    let discard = game.getZone Discard
+    let currentColor = discard.color
+    let currentNumber = discard.number
+    let card: Card = object.getValue
+    match card
+        when Simple { color, number } do
+            if !(color == currentColor || (Some number) = currentNumber) then
+                raise InvalidAction
+        when Plus2 { color } do
+            if color != currentColor then
+                raise InvalidAction
+        when Reverse { color } do
+            if color != currentColor then
+                raise InvalidAction
+            game.reversePlayerOrder
+        otherwise do
+            raise BuggedState
+    let hand = player.getZone hand
+    game.insertObjects discard [(game.removeObject hand object)]
+    game.moveToNextPlayer    
+
+on Action<PlayCard> run playedCard
+
+# Players can choose to play a special card, but have to give their choice of
+# color
+
+playedChoiceCard player PlayCardWithColor { object, color } = do
+    let discard = game.getZone Discard
+    let card: Card = object.getValue
+    match card
+        when Plus4 | PickColor do
+            discard.color = color
+        otherwise do
+            raise BuggedState
+    let hand = player.getZone hand
+    game.insertObjects discard [(game.removeObject hand object)]
+    game.moveToNextPlayer    
+
+on Action<PlayCardWithColor> run playedCard
+
+# Players can choose to draw cards
+
+playerDrawCard player DrawCard = do
+    let deck = game.getZone Deck
+    let hand = player.getZone hand
+    game.insertObjects hand (game.takeObjects deck 1)
+    game.moveToNextPlayer
+
+on Action<DrawCard> run playerDrawCard
+
+# When a card is played, let's update the allowed colors!
+
+setColorFromPlayedCard object = do
+    let discard = game.getZone Discard    
+    let card: Card = object.getValue
+    match card
+        when Simple { color, number } do
+            discard.color = color
+            discard.number = Some number
+        when Plus2 { color } | Reverse { color } do
+            discard.color = color
+            discard.number = None
+        when Plus4 | PickColor do
+            # Value is set when card is played
+
+on ObjectMoved { to: Discard { .. }, .. } run setColorFromPlayedCard
+
+# Playing special cards causes that player to take two cards and skips their
+# turn
+
+handlePlayedSpecialCards object = do
+    let deck = game.getZone Deck
+    let card: Card = object.getValue
+    let ActivePlayer { player } = game.getValue
+    let hand = player.getZone Hand
+    match card
+        when Plus2 { .. } do
+            game.insertObjects hand (game.takeObjects deck 2)
+            game.moveToNextPlayer
+        when Plus4 do
+            game.insertObjects hand (game.takeObjects deck 4)
+            game.moveToNextPlayer
+        otherwise do
+            # Nothing!
+
+on ObjectMoved { to: Discard { .. }, from: Hand { .. } } run handlePlayedSpecialCards
+
+# If after playing a card, a players hand is empty, then they win!
+
+playerWinsGame player = do
+    let hand = player.getZone Hand
+    if hand.isEmpty then
+        game.playerWinGame player
+
+on PlayerTurnEnd run playerWinsGame
+
+
+# Whenever a card is taken from the deck, if it is empty afterwards, we shuffle
+# the discard pile into the deck
+
+shuffleDiscardIntoDeck _ = do
+    let deck = game.getZone Deck
+    let discard = game.getZone Discard
+    if deck.isEmpty then
+        game.insertObjects deck (shuffle (game.takeAllObjects discard))
+
+on ObjectMoved { from: Deck, .. } run shuffleDiscardIntoDeck

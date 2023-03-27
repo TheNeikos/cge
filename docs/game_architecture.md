@@ -135,7 +135,7 @@ A few things happen here:
 Now, let's start defining the beginning of the game:
 
 ```cgelang
-func startGame {
+func startGame() {
     let deck = getZone(DeckZone)
     let discardPile = getZone(DiscardPile)
 
@@ -198,9 +198,6 @@ func allowCurrentPlayerToDrawOrPlayCard() {
 }
 
 Game.registerFact(PlayCardOrDraw, allowCurrentPlayerToDrawOrPlayCard)
-
 ```
 
 It is important to note that these inputs are recalculated _everytime_ the engine 'steps forward'
-
-
