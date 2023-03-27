@@ -1,7 +1,7 @@
 {
   description = "The Card Game Engine project";
   inputs = {
-    nixpkgs.url = "nixpkgs/nixos-22.05";
+    nixpkgs.url = "nixpkgs/nixos-22.11";
     flake-utils = {
       url = "github:numtide/flake-utils";
     };
@@ -29,9 +29,33 @@
         rustTarget = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
         craneLib = (crane.mkLib pkgs).overrideToolchain rustTarget;
 
+        src = craneLib.cleanCargoSource ./.;
+
+        cargoArtifacts = craneLib.buildDepsOnly {
+          inherit src;
+          cargoExtraArgs = "--all-features --all";
+        };
+
+        cge = craneLib.buildPackage {
+          inherit cargoArtifacts src;
+          cargoExtraArgs = "--all-features --all";
+        };
+
       in
       rec {
-        checks = { };
+        checks = {
+          inherit cge;
+
+          cge-clippy = craneLib.cargoClippy {
+            inherit cargoArtifacts src;
+            cargoExtraArgs = "--all --all-features";
+            cargoClippyExtraArgs = "-- --deny warnings";
+          };
+
+          cge-fmt = craneLib.cargoFmt {
+            inherit src;
+          };
+        };
 
         devShells.default = devShells.cge;
         devShells.cge = pkgs.mkShell {

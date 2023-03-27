@@ -1,2 +1,7 @@
 # Direnv stuff
 .direnv
+
+
+# Added by cargo
+
+/target
